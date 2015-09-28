@@ -39,9 +39,9 @@ import org.neo4j.kernel.api.index.NodePropertyUpdate;
 import org.neo4j.kernel.api.index.PropertyAccessor;
 import org.neo4j.kernel.api.index.Reservation;
 import org.neo4j.kernel.impl.api.index.IndexUpdateMode;
-import org.neo4j.register.Register.DoubleLong;
 
 import static org.neo4j.helpers.collection.IteratorUtil.emptyIterator;
+import static org.neo4j.register.Register.DoubleLong;
 
 class InMemoryIndex
 {
@@ -191,17 +191,12 @@ class InMemoryIndex
     private class OnlineAccessor implements IndexAccessor
     {
         @Override
-        public void force()
+        public void force() throws IOException
         {
         }
 
         @Override
-        public void flush()
-        {
-        }
-
-        @Override
-        public void drop()
+        public void drop() throws IOException
         {
             indexData.drop();
         }
@@ -213,7 +208,7 @@ class InMemoryIndex
         }
 
         @Override
-        public void close()
+        public void close() throws IOException
         {
         }
 

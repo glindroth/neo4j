@@ -23,7 +23,6 @@ public class FakeCommitment implements Commitment
 {
     private final long id;
     private final TransactionIdStore transactionIdStore;
-    private boolean committed;
 
     public FakeCommitment( long id, TransactionIdStore transactionIdStore )
     {
@@ -34,7 +33,6 @@ public class FakeCommitment implements Commitment
     @Override
     public void publishAsCommitted()
     {
-        committed = true;
         transactionIdStore.transactionCommitted( id, 3 );
     }
 
@@ -48,11 +46,5 @@ public class FakeCommitment implements Commitment
     public long transactionId()
     {
         return id;
-    }
-
-    @Override
-    public boolean markedAsCommitted()
-    {
-        return committed;
     }
 }

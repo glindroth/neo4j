@@ -71,11 +71,8 @@ import org.neo4j.kernel.impl.api.TransactionCommitProcess;
 import org.neo4j.kernel.impl.api.TransactionHooks;
 import org.neo4j.kernel.impl.api.TransactionRepresentationStoreApplier;
 import org.neo4j.kernel.impl.api.UpdateableSchemaState;
-import org.neo4j.kernel.impl.api.index.IndexUpdateMode;
 import org.neo4j.kernel.impl.api.index.IndexUpdatesValidator;
 import org.neo4j.kernel.impl.api.index.IndexingService;
-import org.neo4j.kernel.impl.api.index.OnlineIndexUpdatesValidator;
-import org.neo4j.kernel.impl.api.index.RecoveryIndexingUpdatesValidator;
 import org.neo4j.kernel.impl.api.index.SchemaIndexProviderMap;
 import org.neo4j.kernel.impl.api.index.sampling.IndexSamplingConfig;
 import org.neo4j.kernel.impl.api.scan.LabelScanStoreProvider;
@@ -231,8 +228,6 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
         CheckPointer checkPointing();
 
         TransactionAppender transactionAppender();
-
-        IdOrderingQueue legacyIndexTransactionOrderingQueue();
     }
 
     private interface KernelModule
@@ -476,9 +471,6 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
         // Build all modules and their services
         try
         {
-            LegacyIndexApplierLookup legacyIndexApplierLookup =
-                    dependencies.satisfyDependency( new LegacyIndexApplierLookup.Direct( legacyIndexProviderLookup ) );
-
             final NeoStoreModule neoStoreModule =
                     buildNeoStore( storeFactory, labelTokens, relationshipTypeTokens, propertyKeyTokenHolder );
             // TODO The only reason this is here is because of the provider-stuff for DiskLayer. Remove when possible:
@@ -498,13 +490,12 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
             TransactionLogModule transactionLogModule =
                     buildTransactionLogs( storeDir, config, logProvider, scheduler, indexingModule.labelScanStore(),
                             fs, neoStoreModule.neoStore(), cacheModule.cacheAccess(), indexingModule.indexingService(),
-                            indexProviders.values(), legacyIndexApplierLookup );
+                            indexProviders.values() );
 
             buildRecovery( fs, cacheModule.cacheAccess(), indexingModule.indexingService(),
-                    indexingModule.labelScanStore(), neoStoreModule.neoStore(),
+                    indexingModule.indexUpdatesValidator(), indexingModule.labelScanStore(), neoStoreModule.neoStore(),
                     monitors.newMonitor( RecoveryVisitor.Monitor.class ), monitors.newMonitor( Recovery.Monitor.class ),
-                    transactionLogModule.logFiles(), transactionLogModule.storeFlusher(), startupStatistics,
-                    legacyIndexApplierLookup );
+                    transactionLogModule.logFiles(), transactionLogModule.storeFlusher(), startupStatistics );
 
             KernelModule kernelModule = buildKernel( indexingModule.integrityValidator(),
                     transactionLogModule.transactionAppender(), neoStoreModule.neoStore(),
@@ -691,8 +682,7 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
         final IntegrityValidator integrityValidator = new IntegrityValidator( neoStore, indexingService );
 
         final IndexUpdatesValidator indexUpdatesValidator = dependencies.satisfyDependency(
-                new OnlineIndexUpdatesValidator( neoStore, kernelHealth, new PropertyLoader( neoStore ),
-                        indexingService, IndexUpdateMode.ONLINE ) );
+                new IndexUpdatesValidator( neoStore, kernelHealth, new PropertyLoader( neoStore ), indexingService ) );
 
         // TODO Move to constructor
         final LabelScanStore labelScanStore = dependencyResolver.resolveDependency( LabelScanStoreProvider.class,
@@ -763,17 +753,18 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
             FileSystemAbstraction fileSystemAbstraction,
             NeoStore neoStore, CacheAccessBackDoor cacheAccess,
             IndexingService indexingService,
-            Iterable<IndexImplementation> indexProviders,
-            LegacyIndexApplierLookup legacyIndexApplierLookup )
+            Iterable<IndexImplementation> indexProviders )
     {
         TransactionMetadataCache transactionMetadataCache = new TransactionMetadataCache( 1000, 100_000 );
         final PhysicalLogFiles logFiles = new PhysicalLogFiles( storeDir, PhysicalLogFile.DEFAULT_NAME,
                 fileSystemAbstraction );
 
-        final IdOrderingQueue legacyIndexTransactionOrdering = new SynchronizedArrayIdOrderingQueue( 20 );
+        IdOrderingQueue legacyIndexTransactionOrdering = new SynchronizedArrayIdOrderingQueue( 20 );
+        LegacyIndexApplierLookup.Direct legacyIndexProviderLookup =
+                new LegacyIndexApplierLookup.Direct( this.legacyIndexProviderLookup );
         final TransactionRepresentationStoreApplier storeApplier = dependencies.satisfyDependency(
                 new TransactionRepresentationStoreApplier( indexingService, alwaysCreateNewWriter( labelScanStore ),
-                        neoStore, cacheAccess, lockService, legacyIndexApplierLookup, indexConfigStore, kernelHealth,
+                        neoStore, cacheAccess, lockService, legacyIndexProviderLookup, indexConfigStore, kernelHealth,
                         legacyIndexTransactionOrdering ) );
 
         final PhysicalLogFile logFile = new PhysicalLogFile( fileSystemAbstraction, logFiles,
@@ -901,12 +892,6 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
             {
                 return appender;
             }
-
-            @Override
-            public IdOrderingQueue legacyIndexTransactionOrderingQueue()
-            {
-                return legacyIndexTransactionOrdering;
-            }
         };
     }
 
@@ -923,17 +908,15 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
     }
 
     private void buildRecovery( final FileSystemAbstraction fileSystemAbstraction, CacheAccessBackDoor cacheAccess,
-            IndexingService indexingService, LabelScanStore labelScanStore,
+            IndexingService indexingService, IndexUpdatesValidator indexUpdatesValidator, LabelScanStore labelScanStore,
             final NeoStore neoStore, RecoveryVisitor.Monitor recoveryVisitorMonitor, Recovery.Monitor recoveryMonitor,
             final PhysicalLogFiles logFiles, final StoreFlusher storeFlusher,
-            final StartupStatisticsProvider startupStatistics,
-            LegacyIndexApplierLookup legacyIndexApplierLookup )
+            final StartupStatisticsProvider startupStatistics )
     {
         final RecoveryLabelScanWriterProvider labelScanWriters =
                 new RecoveryLabelScanWriterProvider( labelScanStore, 1000 );
-        final RecoveryLegacyIndexApplierLookup recoveryLegacyIndexApplierLookup = new RecoveryLegacyIndexApplierLookup(
-                legacyIndexApplierLookup, 1000 );
-        final RecoveryIndexingUpdatesValidator indexUpdatesValidator = new RecoveryIndexingUpdatesValidator( indexingService );
+        final RecoveryLegacyIndexApplierLookup legacyIndexApplierLookup = new RecoveryLegacyIndexApplierLookup(
+                new LegacyIndexApplierLookup.Direct( legacyIndexProviderLookup ), 1000 );
         final TransactionRepresentationStoreApplier storeRecoverer =
                 new TransactionRepresentationStoreApplier( indexingService, labelScanWriters, neoStore, cacheAccess,
                         lockService, legacyIndexApplierLookup, indexConfigStore, kernelHealth, IdOrderingQueue.BYPASS );
@@ -948,9 +931,8 @@ public class NeoStoreDataSource implements NeoStoreSupplier, Lifecycle, IndexPro
         final LatestCheckPointFinder checkPointFinder =
                 new LatestCheckPointFinder( logFiles, fileSystemAbstraction, logEntryReader );
 
-        Recovery.SPI spi = new DefaultRecoverySPI( labelScanWriters, recoveryLegacyIndexApplierLookup,
-                storeFlusher, logFileRecoverer, logFiles, fileSystemAbstraction, neoStore, checkPointFinder,
-                indexUpdatesValidator );
+        Recovery.SPI spi = new DefaultRecoverySPI( labelScanWriters, legacyIndexApplierLookup,
+                storeFlusher, logFileRecoverer, logFiles, fileSystemAbstraction, neoStore, checkPointFinder );
 
         Recovery recovery = new Recovery( spi, recoveryMonitor );
 

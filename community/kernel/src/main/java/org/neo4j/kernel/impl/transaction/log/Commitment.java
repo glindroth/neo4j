@@ -48,6 +48,4 @@ public interface Commitment
      * @return the commitment transaction id
      */
     long transactionId();
-
-    boolean markedAsCommitted();
 }

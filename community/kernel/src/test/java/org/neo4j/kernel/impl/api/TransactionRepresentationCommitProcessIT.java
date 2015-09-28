@@ -270,7 +270,7 @@ public class TransactionRepresentationCommitProcessIT
 
         private volatile boolean completed = false;
         private final CheckPointer checkPointer;
-        private final CountDownLatch completedLatch;
+        private CountDownLatch completedLatch;
 
         public InsaneCheckPointer( CheckPointer checkPointer, CountDownLatch completedLatch )
         {
@@ -314,7 +314,7 @@ public class TransactionRepresentationCommitProcessIT
         private NeoStore neoStore;
         private final TransactionAppender appender;
         private final TransactionRepresentationStoreApplier storeApplier;
-        private final CountDownLatch completedLatch;
+        private CountDownLatch completedLatch;
         private volatile boolean completed = false;
 
         public TransactionalWorker( NeoStore neoStore, TransactionAppender appender,
@@ -371,8 +371,8 @@ public class TransactionRepresentationCommitProcessIT
         private TransactionRepresentationCommitProcess createTransactionCommitProcess() throws IOException
         {
             IndexUpdatesValidator updatesValidator = mock( IndexUpdatesValidator.class );
-            when( updatesValidator.validate( any( TransactionRepresentation.class ) ) )
-                    .thenReturn( mock( ValidatedIndexUpdates.class ) );
+            when( updatesValidator.validate( any( TransactionRepresentation.class ), any
+                    ( TransactionApplicationMode.class ) ) ).thenReturn( mock( ValidatedIndexUpdates.class ) );
 
             return new TransactionRepresentationCommitProcess( appender, storeApplier, updatesValidator );
         }

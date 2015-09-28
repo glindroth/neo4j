@@ -317,12 +317,6 @@ public class NodeCorrectlyIndexedCheckTest
         }
 
         @Override
-        public void flush() throws IOException
-        {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public BoundedIterable<Long> newAllEntriesReader()
         {
             throw new UnsupportedOperationException();
