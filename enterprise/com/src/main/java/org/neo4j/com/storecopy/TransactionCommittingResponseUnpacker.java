@@ -76,7 +76,7 @@ public class TransactionCommittingResponseUnpacker implements ResponseUnpacker, 
 
     }
 
-    private static final int DEFAULT_BATCH_SIZE = 100;
+    private static final int DEFAULT_BATCH_SIZE = 1;
     private final TransactionQueue transactionQueue;
     // Visits all queued transactions, committing them
     private final TransactionVisitor batchCommitter = new TransactionVisitor()
